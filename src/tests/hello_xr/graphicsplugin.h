@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2021, The Khronos Group Inc.
+// Copyright (c) 2017-2021, The Khronos Group Inc
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -33,6 +33,9 @@ struct IGraphicsPlugin {
     // Render to a swapchain image for a projection view.
     virtual void RenderView(const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
                             int64_t swapchainFormat, const std::vector<Cube>& cubes) = 0;
+
+    virtual void postRenderLayer() {}
+    virtual void execCmd() {}
 
     // Get recommended number of sub-data element samples in view (recommendedSwapchainSampleCount)
     // if supported by the graphics plugin. A supported value otherwise.

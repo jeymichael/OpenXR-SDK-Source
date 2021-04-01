@@ -864,6 +864,9 @@ struct OpenXrProgram : IOpenXrProgram {
                     hapticActionInfo.action = m_input.vibrateAction;
                     hapticActionInfo.subactionPath = m_input.handSubactionPath[hand];
                     CHECK_XRCMD(xrApplyHapticFeedback(m_session, &hapticActionInfo, (XrHapticBaseHeader*)&vibration));
+
+                    // When squeezed, trigger the rotate cmd
+                    if (m_graphicsPlugin) m_graphicsPlugin->execCmd();
                 }
             }
 
@@ -1002,6 +1005,8 @@ struct OpenXrProgram : IOpenXrProgram {
             XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
             CHECK_XRCMD(xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
         }
+
+        m_graphicsPlugin->postRenderLayer();
 
         layer.space = m_appSpace;
         layer.viewCount = (uint32_t)projectionLayerViews.size();

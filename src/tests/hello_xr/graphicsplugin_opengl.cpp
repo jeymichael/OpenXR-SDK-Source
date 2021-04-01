@@ -176,9 +176,13 @@ struct OpenGLGraphicsPlugin : public IGraphicsPlugin {
         m_vertexAttribCoords = glGetAttribLocation(m_program, "VertexPos");
         m_vertexAttribColor = glGetAttribLocation(m_program, "VertexColor");
 
+        for (int i = 0; i < 36 * 26; i++) {
+            m_cubeVertices[i] = Geometry::c_cubeVertices[i];
+        }
         glGenBuffers(1, &m_cubeVertexBuffer);
         glBindBuffer(GL_ARRAY_BUFFER, m_cubeVertexBuffer);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(Geometry::c_cubeVertices), Geometry::c_cubeVertices, GL_STATIC_DRAW);
+        //glBufferData(GL_ARRAY_BUFFER, sizeof(Geometry::c_cubeVertices), Geometry::c_cubeVertices, GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(m_cubeVertices), m_cubeVertices, GL_DYNAMIC_DRAW);
 
         glGenBuffers(1, &m_cubeIndexBuffer);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_cubeIndexBuffer);
@@ -359,6 +363,312 @@ struct OpenGLGraphicsPlugin : public IGraphicsPlugin {
     }
 
     uint32_t GetSupportedSwapchainSampleCount(const XrViewConfigurationView&) override { return 1; }
+    void rotate_subcube(int scube, const float degreesX, const float degreesY, const float degreesZ) {
+#if 0
+        std::ostringstream out;
+        out.fill('0');
+        out << "X: " << m_cubeVertices[0].Position.x;
+        out << "  New X : " << m_cubeVertices[0].Position.x << std::endl;
+        Log::Write(Log::Level::Info, out.str().c_str());
+#endif
+        XrMatrix4x4f txformRot;
+        XrMatrix4x4f_CreateRotation(&txformRot, degreesX, degreesY, degreesZ);
+        int i, iMax = 6 * 6;  // 6 vertex per face
+        int vInd = scube * 6 * 6;
+        for (i = 0; i < iMax; i++) {
+            struct XrVector3f vtxIn = m_cubeVertices[vInd + i].Position;
+            struct XrVector3f vtxOut = vtxIn;
+            // Rotate around Y axis
+            XrMatrix4x4f_TransformVector3f(&vtxOut, &txformRot, &vtxIn);
+            m_cubeVertices[vInd + i].Position = vtxOut;
+        }
+    }
+
+    void reset() {
+        rotateCmd = 0;
+        // memcpy of all verts from source to local data member again
+        for (int i = 0; i < 36 * 26; i++) {
+            m_cubeVertices[i].Position = Geometry::c_cubeVertices[i].Position;
+            m_tmpVertices[i].Color = m_cubeVertices[i].Color;  // Take a copy of current colors
+        }
+    }
+    bool increment_rotate(int dir) {
+        static float rotateMin = -90.0f, rotateMax = 90.0f, rotateCurrent = 0.0f;
+        if (dir < 0)
+            rotateCurrent += (-0.25f);
+        else
+            rotateCurrent += (0.25f);
+        if (((dir < 0) && (rotateCurrent < rotateMin)) || ((dir > 0) && (rotateCurrent > rotateMax))) {
+            // stop the rotation and reset current
+            reset();
+            rotateCurrent = 0.0f;
+            return false;
+        }
+        return true;
+    }
+
+    void copy_subCube_face_colors(int dstCube, int dstFace, int srcCube, int srcFace) {
+        int srcOff = srcCube * 6 * 6 + srcFace * 6;
+        int dstOff = dstCube * 6 * 6 + dstFace * 6;
+        for (int j = 0; j < 6; j++) {
+            m_cubeVertices[dstOff + j].Color = m_tmpVertices[srcOff + j].Color;
+        }
+    }
+
+    void reset_subCube_colors(int dstInd) {
+        int dstOff = dstInd * 6 * 6;
+        for (int j = 0; j < 36; j++) {
+            m_cubeVertices[dstOff + j].Color = Geometry::Grey;
+        }
+    }
+
+    void rotate_R() {
+        // Right Clockwise : Rotate -90 about X Axis
+        // Blue Right SubCubes  : Axis SubCube[1] Edges SubCube[10:13] Corners SubCube[22:25]
+        // Verts of i-th subcube : [i * SUBCUBE_VMAX, (i+1) * SUBCUBE_VMAX - 1]
+        if (0 == rotateCmd) return;
+        int i, subcube_indices[9] = {1, 10, 11, 12, 13, 22, 23, 24, 25};
+        for (i = 0; i < 9; i++) {
+            rotate_subcube(subcube_indices[i], -0.25f, 0.f, 0.f);
+        }
+        if (!increment_rotate(-1)) {
+            // Rotation complete.  Reset verts (done by increment_rotate) & update colors
+            // Copy Edge subcubes colors to 10,11,12,13 from copy:12,13,11,10
+            // xx.F1 transfers to xx.F1, 10.F2 = 12.F5, 11.F3 = 13.F5, 12.F4 = 11.F3, 13.F5 = 10.F2
+            reset_subCube_colors(10);
+            reset_subCube_colors(11);
+            reset_subCube_colors(12);
+            reset_subCube_colors(13);
+            copy_subCube_face_colors(10, 1, 12, 1);
+            copy_subCube_face_colors(11, 1, 13, 1);
+            copy_subCube_face_colors(12, 1, 11, 1);
+            copy_subCube_face_colors(13, 1, 10, 1);
+            copy_subCube_face_colors(10, 2, 12, 4);
+            copy_subCube_face_colors(11, 3, 13, 5);
+            copy_subCube_face_colors(12, 4, 11, 3);
+            copy_subCube_face_colors(13, 5, 10, 2);
+
+            // Copy Corner subcubes colors to 22,23,24,25 from copy:24,22,25,23
+            copy_subCube_face_colors(22, 2, 24, 4);
+            copy_subCube_face_colors(22, 4, 24, 3);
+            copy_subCube_face_colors(23, 2, 22, 4);
+            copy_subCube_face_colors(23, 5, 22, 2);
+            copy_subCube_face_colors(24, 3, 25, 5);
+            copy_subCube_face_colors(24, 4, 25, 3);
+            copy_subCube_face_colors(25, 3, 23, 5);
+            copy_subCube_face_colors(25, 5, 23, 2);
+        }
+    }
+
+    void rotate_L() {
+        // Left Clockwise : Rotate 90 about X Axis
+        // White Left SubCubes  : Axis SubCube[0] Edges SubCube[6:9] Corners SubCube[18:21]
+        // Verts of i-th subcube : [i * SUBCUBE_VMAX, (i+1) * SUBCUBE_VMAX - 1]
+        if (0 == rotateCmd) return;
+        int i, subcube_indices[9] = {0, 6, 7, 8, 9, 18, 19, 20, 21};
+        for (i = 0; i < 9; i++) {
+            rotate_subcube(subcube_indices[i], 0.25f, 0.f, 0.f);
+        }
+        if (!increment_rotate(1)) {
+            // Rotation complete.  Reset verts (done by increment_rotate) & update colors
+            // Copy Edge subcubes colors to 6,7,8,9 from copy:9,8,6,7
+            reset_subCube_colors(6);
+            reset_subCube_colors(7);
+            reset_subCube_colors(8);
+            reset_subCube_colors(9);
+            copy_subCube_face_colors(6, 0, 9, 0);
+            copy_subCube_face_colors(7, 0, 8, 0);
+            copy_subCube_face_colors(8, 0, 6, 0);
+            copy_subCube_face_colors(9, 0, 7, 0);
+            copy_subCube_face_colors(6, 2, 9, 5);
+            copy_subCube_face_colors(7, 3, 8, 4);
+            copy_subCube_face_colors(8, 4, 6, 2);
+            copy_subCube_face_colors(9, 5, 7, 3);
+
+            // Copy Corner subcubes colors to 18,19,20,21 from copy:19,21,18,20
+            copy_subCube_face_colors(18, 2, 19, 5);
+            copy_subCube_face_colors(18, 4, 19, 2);
+            copy_subCube_face_colors(19, 2, 21, 5);
+            copy_subCube_face_colors(19, 5, 21, 3);
+            copy_subCube_face_colors(20, 3, 18, 4);
+            copy_subCube_face_colors(20, 4, 18, 2);
+            copy_subCube_face_colors(21, 3, 20, 4);
+            copy_subCube_face_colors(21, 5, 20, 3);
+        }
+    }
+
+    void rotate_U() {
+        // Up Clockwise : Rotate -90 about Y Axis
+        // Yellow Up SubCubes  : Axis SubCube[3] Edges SubCube[7,11,16,17] Corners SubCube[20, 21, 24, 25]
+        // Verts of i-th subcube : [i * SUBCUBE_VMAX, (i+1) * SUBCUBE_VMAX - 1]
+        if (0 == rotateCmd) return;
+        int i, subcube_indices[9] = {3, 7, 11, 16, 17, 20, 21, 24, 25};
+        for (i = 0; i < 9; i++) {
+            rotate_subcube(subcube_indices[i], 0.f, -0.25f, 0.f);
+        }
+        if (!increment_rotate(-1)) {
+            // Rotation complete.  Reset verts (done by increment_rotate) & update colors
+            // Copy Edge subcubes colors to 7,11,16,17 from copy:17,16,7,11
+            reset_subCube_colors(7);
+            reset_subCube_colors(11);
+            reset_subCube_colors(16);
+            reset_subCube_colors(17);
+            copy_subCube_face_colors(7, 3, 17, 3);
+            copy_subCube_face_colors(11, 3, 16, 3);
+            copy_subCube_face_colors(16, 3, 7, 3);
+            copy_subCube_face_colors(17, 3, 11, 3);
+            copy_subCube_face_colors(7, 0, 17, 5);
+            copy_subCube_face_colors(11, 1, 16, 4);
+            copy_subCube_face_colors(16, 4, 7, 0);
+            copy_subCube_face_colors(17, 5, 11, 1);
+
+            // Copy Corner subcubes colors to 20,21,24,25 from copy:21,25,20,24
+            copy_subCube_face_colors(20, 0, 21, 5);
+            copy_subCube_face_colors(20, 4, 21, 0);
+            copy_subCube_face_colors(21, 0, 25, 5);
+            copy_subCube_face_colors(21, 5, 25, 1);
+            copy_subCube_face_colors(24, 1, 20, 4);
+            copy_subCube_face_colors(24, 4, 20, 0);
+            copy_subCube_face_colors(25, 1, 24, 4);
+            copy_subCube_face_colors(25, 5, 24, 1);
+        }
+    }
+
+    void rotate_D() {
+        // Down Clockwise : Rotate 90 about Y Axis
+        // Green Down SubCubes  : Axis SubCube[2] Edges SubCube[6,10,14,15] Corners SubCube[18, 19, 22, 23]
+        // Verts of i-th subcube : [i * SUBCUBE_VMAX, (i+1) * SUBCUBE_VMAX - 1]
+        if (0 == rotateCmd) return;
+        int i, subcube_indices[9] = {2, 6, 10, 14, 15, 18, 19, 22, 23};
+        for (i = 0; i < 9; i++) {
+            rotate_subcube(subcube_indices[i], 0.f, 0.25f, 0.f);
+        }
+        if (!increment_rotate(1)) {
+            // Rotation complete.  Reset verts (done by increment_rotate) & update colors
+            // Copy Edge subcubes colors to 6,10,14,15 from copy:14,15,10,6
+            reset_subCube_colors(6);
+            reset_subCube_colors(10);
+            reset_subCube_colors(14);
+            reset_subCube_colors(15);
+            copy_subCube_face_colors(6, 2, 14, 2);
+            copy_subCube_face_colors(10, 2, 15, 2);
+            copy_subCube_face_colors(14, 2, 10, 2);
+            copy_subCube_face_colors(15, 2, 6, 2);
+            copy_subCube_face_colors(6, 0, 14, 4);
+            copy_subCube_face_colors(10, 1, 15, 5);
+            copy_subCube_face_colors(14, 4, 10, 1);
+            copy_subCube_face_colors(15, 5, 6, 0);
+
+            // Copy Corner subcubes colors to 18,19,22,23 from copy:22,18,23,19
+            copy_subCube_face_colors(18, 0, 22, 4);
+            copy_subCube_face_colors(18, 4, 22, 1);
+            copy_subCube_face_colors(19, 0, 18, 4);
+            copy_subCube_face_colors(19, 5, 18, 0);
+            copy_subCube_face_colors(22, 1, 23, 5);
+            copy_subCube_face_colors(22, 4, 23, 1);
+            copy_subCube_face_colors(23, 1, 19, 5);
+            copy_subCube_face_colors(23, 5, 19, 0);
+        }
+    }
+
+    void rotate_F() {
+        // Front Clockwise : Rotate -90 about Z Axis
+        // Red Front SubCubes  : Axis SubCube[5] Edges SubCube[9,13,15,17] Corners SubCube[19, 21, 23, 25]
+        // Verts of i-th subcube : [i * SUBCUBE_VMAX, (i+1) * SUBCUBE_VMAX - 1]
+        if (0 == rotateCmd) return;
+        int i, subcube_indices[9] = {5, 9, 13, 15, 17, 19, 21, 23, 25};
+        for (i = 0; i < 9; i++) {
+            rotate_subcube(subcube_indices[i], 0.f, 0.f, -0.25f);
+        }
+        if (!increment_rotate(-1)) {
+            // Rotation complete.  Reset verts (done by increment_rotate) & update colors
+            // Copy Edge subcubes colors to 9,13,15,17 from copy:15,17,13,9
+            reset_subCube_colors(9);
+            reset_subCube_colors(13);
+            reset_subCube_colors(15);
+            reset_subCube_colors(17);
+            copy_subCube_face_colors(9, 5, 15, 5);
+            copy_subCube_face_colors(13, 5, 17, 5);
+            copy_subCube_face_colors(15, 5, 13, 5);
+            copy_subCube_face_colors(17, 5, 9, 5);
+            copy_subCube_face_colors(9, 0, 15, 2);
+            copy_subCube_face_colors(13, 1, 17, 3);
+            copy_subCube_face_colors(15, 2, 13, 1);
+            copy_subCube_face_colors(17, 3, 9, 0);
+
+            // Copy Corner subcubes colors to 19,21,23,25 from copy:23,19,25,21
+            copy_subCube_face_colors(19, 0, 23, 2);
+            copy_subCube_face_colors(19, 2, 23, 1);
+            copy_subCube_face_colors(21, 0, 19, 2);
+            copy_subCube_face_colors(21, 3, 19, 0);
+            copy_subCube_face_colors(23, 1, 25, 3);
+            copy_subCube_face_colors(23, 2, 25, 1);
+            copy_subCube_face_colors(25, 1, 21, 3);
+            copy_subCube_face_colors(25, 3, 21, 0);
+        }
+    }
+
+    void rotate_B() {
+        // Back Clockwise : Rotate 90 about Z Axis
+        // Orange Front SubCubes  : Axis SubCube[4] Edges SubCube[8,12,14,16] Corners SubCube[18, 20, 22, 24]
+        // Verts of i-th subcube : [i * SUBCUBE_VMAX, (i+1) * SUBCUBE_VMAX - 1]
+        if (0 == rotateCmd) return;
+        int i, subcube_indices[9] = {4, 8, 12, 14, 16, 18, 20, 22, 24};
+        for (i = 0; i < 9; i++) {
+            rotate_subcube(subcube_indices[i], 0.f, 0.f, 0.25f);
+        }
+        if (!increment_rotate(1)) {
+            // Rotation complete.  Reset verts (done by increment_rotate) & update colors
+            // Copy Edge subcubes colors to 8,12,14,16 from copy:16,14,8,12
+            reset_subCube_colors(8);
+            reset_subCube_colors(12);
+            reset_subCube_colors(14);
+            reset_subCube_colors(16);
+            copy_subCube_face_colors(8, 4, 16, 4);
+            copy_subCube_face_colors(12, 4, 14, 4);
+            copy_subCube_face_colors(14, 4, 8, 4);
+            copy_subCube_face_colors(16, 4, 12, 4);
+            copy_subCube_face_colors(8, 0, 16, 3);
+            copy_subCube_face_colors(12, 1, 14, 2);
+            copy_subCube_face_colors(14, 2, 8, 0);
+            copy_subCube_face_colors(16, 3, 12, 1);
+
+            // Copy Corner subcubes colors to 18,20,22,24 from copy:20,24,18,22
+            copy_subCube_face_colors(18, 0, 20, 3);
+            copy_subCube_face_colors(18, 2, 20, 0);
+            copy_subCube_face_colors(20, 0, 24, 3);
+            copy_subCube_face_colors(20, 3, 24, 1);
+            copy_subCube_face_colors(22, 1, 18, 2);
+            copy_subCube_face_colors(22, 2, 18, 0);
+            copy_subCube_face_colors(24, 1, 22, 2);
+            copy_subCube_face_colors(24, 3, 22, 1);
+        }
+    }
+
+    void postRenderLayer() override {
+        if (rotateCmd == 1) {
+            rotate_R();
+        } else if (rotateCmd == 2) {
+            rotate_L();
+        } else if (rotateCmd == 3) {
+            rotate_U();
+        } else if (rotateCmd == 4) {
+            rotate_D();
+        } else if (rotateCmd == 5) {
+            rotate_F();
+        } else if (rotateCmd == 6) {
+            rotate_B();
+        }
+        // Call glBufferSubData and update the above vertices
+        // Can also glMapBuffer and directly update GPU memory, if the sync can be handled
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(m_cubeVertices), m_cubeVertices);
+    }
+
+    void execCmd() override {
+        if (rotateCmd == 0) {
+            rotateCmd = (rand() % 6) + 1;
+        }
+    }
 
    private:
 #ifdef XR_USE_PLATFORM_WIN32
@@ -380,6 +690,9 @@ struct OpenGLGraphicsPlugin : public IGraphicsPlugin {
     GLuint m_vao{0};
     GLuint m_cubeVertexBuffer{0};
     GLuint m_cubeIndexBuffer{0};
+
+    Geometry::Vertex m_cubeVertices[36 * 26], m_tmpVertices[36 * 26];
+    int rotateCmd = 0;
 
     // Map color buffer to associated depth buffer. This map is populated on demand.
     std::map<uint32_t, uint32_t> m_colorToDepthMap;
